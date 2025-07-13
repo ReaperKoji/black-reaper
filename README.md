@@ -1,87 +1,80 @@
 # BlackReaper
 
+![BlackReaper Banner](https://user-images.githubusercontent.com/ReaperKoji/blackreaper-banner.png)  
+*Uma suite CLI modular para automação de reconhecimento, enumeração web e pós-exploração focada em CTFs, Bug Bounty e pentests.*
+
+---
+
 ## Descrição
 
-BlackReaper é uma suíte modular de automação para pentests e CTFs focada em reconhecimento, enumeração, fuzzing e pós-exploração em ambientes Linux. Desenvolvida para rodar via terminal, com estilo hacker, visual atrativo e sem interface gráfica.
+O **BlackReaper** é uma ferramenta CLI 100% terminal, estilosa, modular e eficiente, desenvolvida para hackers éticos, estudantes de cibersegurança e entusiastas de CTFs. Seu foco está na automação de tarefas essenciais como reconhecimento, enumeração web (webenum) e pós-exploração (privesc), tudo com uma interface rica em cores e informações.
 
 ---
 
-## Funcionalidades implementadas até agora
+## Funcionalidades
 
-- Enumeração de informações do sistema e usuário
-- Busca por arquivos SUID e SGID
-- Verificação de permissões sensíveis em arquivos importantes
-- Listagem de processos rodando como root
-- Exposição de variáveis de ambiente sensíveis
-- Detecção de arquivos de backup sensíveis
-- Detecção automática de comandos potencialmente abusáveis para escalada de privilégios, com links diretos para [GTFOBins](https://gtfobins.github.io/)
+- Reconhecimento automatizado de alvos
+- Enumeração Web detalhada com fuzzing e análise
+- Pós-exploração com análise de comandos perigosos, permissões e variáveis de ambiente
+- Geração de relatórios JSON para integração ou análise posterior
+- Interface colorida e amigável usando Rich
+- Recomendação automática baseada em achados críticos
+- Suporte a múltiplos módulos para extensibilidade futura
 
 ---
 
-## Como usar
+## Instalação
 
-### Requisitos
+1. Clone o repositório:
 
-- Python 3.12+
-- Dependências Python (veja abaixo)
+```bash
+git clone https://github.com/seuusuario/black-reaper.git
+cd black-reaper/blackreaper
 
-### Instalando dependências
+Crie e ative um ambiente virtual Python:
 
-Recomendamos criar um ambiente virtual para evitar conflitos:
+python -m venv venv
+source venv/bin/activate   # Linux/Mac
+venv\Scripts\activate      # Windows
 
-python3 -m venv venv
-source venv/bin/activate
-pip install --break-system-packages -r requirements.txt
-Caso encontre erro de ambiente “externally managed”, use a flag --break-system-packages conforme acima.
+Instale as dependências:
 
-Dependências instaladas
-rich
+pip install -r requirements.txt
 
-requests
 
-python-whois
+Uso
+Execute o script principal:
 
-Executando o scanner de escalada de privilégio
+python blackreaper.py --help
 
-python privesc.py
-Para salvar o relatório em JSON:
+Exemplo de execução para reconhecimento:
 
--> 
-python privesc.py -o relatorio.json
-Estrutura do código principal
-privesc.py contém a lógica para coletar informações, listar binários perigosos e detectar possíveis vetores de escalada com links do GTFOBins.
+python blackreaper.py --recon -t alvo.com
 
-A função dangerous_binaries_gtfobins() faz o scan dos binários presentes no sistema e imprime uma tabela estilizada no console.
+Para enumeração web:
 
-O script usa rich para saída visual no terminal.
+python blackreaper.py --webenum -u http://alvo.com
 
-Exemplo de saída
+Para pós-exploração:
 
---- Iniciando Privesc Scan ---
+python blackreaper.py --privesc -f resultado_scan.json
 
-──────────────────────────── Informações do Usuário Atual ─────────────────────────────
-Usuário: reaperkoji
-UID: 1000
-...
+Estrutura do Projeto:
 
-─────────────────── Comandos Potencialmente Abusáveis (GTFOBins) ────────────────────
-┏────────┳────────────────────────┳────────────────────────────────────────────────────────────┓
-┃ Comando┃ Caminho                ┃ GTFOBins                                                  ┃
-┡────────╇────────────────────────╇────────────────────────────────────────────────────────────┩
-│ bash   │ /bin/bash              │ https://gtfobins.github.io/gtfobins/bash/                │
-│ python │ /usr/bin/python3       │ https://gtfobins.github.io/gtfobins/python/              │
-│ vim    │ /usr/bin/vim           │ https://gtfobins.github.io/gtfobins/vim/                 │
-└────────┴────────────────────────┴────────────────────────────────────────────────────────────┘
+- blackreaper.py - Script principal com CLI e gerenciamento de módulos
+- modules/recon.py - Módulo de reconhecimento
+- modules/webenum.py - Enumeração web avançada
+- modules/privesc.py - Pós-exploração e análise de segurança
+- requirements.txt - Dependências do projeto
+- README.md - Documentação (este arquivo)
 
-Próximos upgrade ->
-Implementar mais módulos para enumeração e pós-exploração
+Contribuição
+Contribuições são bem-vindas!
+Sinta-se à vontade para abrir issues ou enviar pull requests.
 
-Melhorar detecção e análise automatizada
+Licença  
+Este projeto está licenciado sob a licença MIT — veja o arquivo LICENSE para detalhes.
 
-Adicionar proteção contra comandos perigosos via sugestões do GTFOBins
-
-Integrar com ferramentas externas e automações
-
-Autor
+Contato
 Pedro Galvão (ReaperKoji)
-Área: Hacking Ético / Cibersegurança
+GitHub | LinkedIn | reaperkoji@gmail.com
