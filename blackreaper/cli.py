@@ -23,6 +23,10 @@ def main():
         required=True,
         help="Domínio alvo"
     )
+    recon_parser.add_argument(
+        "--output",
+        help="Arquivo para salvar resultados (JSON)"
+    )
     recon_parser.set_defaults(func=recon.run)
 
     # Subcomando: WebEnum

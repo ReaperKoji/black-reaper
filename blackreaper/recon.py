@@ -1,25 +1,194 @@
-# blackreaper/recon.py
+import socket
+import requests
+import dns.resolver
+import dns.query
+import dns.zone
+import whois
+import json
+import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.text import Text
 
-import subprocess
-from rich import print
+console = Console()
+
+COMMON_PORTS = [
+    21, 22, 23, 25, 53, 80, 110, 135, 139, 143,
+    443, 445, 993, 995, 1723, 3306, 3389, 5900,
+    8080, 8443
+]
+
+SUBDOMAIN_WORDLIST = [
+    "www", "mail", "ftp", "webmail", "ns1", "ns2",
+    "smtp", "vpn", "m", "dev", "test", "portal", "secure"
+]
+
+def json_serial(obj):
+    """JSON serializer para tipos não nativos (datetime, date)."""
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
+    raise TypeError(f"Tipo {type(obj)} não serializável")
+
+def scan_port(host: str, port: int, timeout=1) -> bool:
+    """Tenta conexão TCP simples para identificar porta aberta."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+def banner_grab(host: str, port: int, timeout=2) -> str | None:
+    """Tenta receber banner via TCP para identificar serviço."""
+    try:
+        s = socket.socket()
+        s.settimeout(timeout)
+        s.connect((host, port))
+        s.sendall(b"\r\n")
+        banner = s.recv(1024).decode(errors='ignore').strip()
+        s.close()
+        return banner if banner else None
+    except Exception:
+        return None
+
+def subdomain_enum(domain: str, wordlist=SUBDOMAIN_WORDLIST) -> list[str]:
+    """Enumeração simples de subdomínios via DNS A record."""
+    found = []
+    console.print(f"[blue]Iniciando enumeração de subdomínios em {domain}[/blue]")
+    resolver = dns.resolver.Resolver()
+    for sub in wordlist:
+        subdomain = f"{sub}.{domain}"
+        try:
+            answers = resolver.resolve(subdomain, 'A')
+            ips = ", ".join([rdata.to_text() for rdata in answers])
+            console.print(f"[green]+ {subdomain} → {ips}[/green]")
+            found.append(subdomain)
+        except Exception:
+            pass
+    return found
+
+def try_zone_transfer(domain: str) -> dict | None:
+    """Tenta zone transfer (AXFR) para descobrir registros DNS."""
+    console.print(f"[blue]Tentando Zone Transfer para {domain}[/blue]")
+    try:
+        ns_records = dns.resolver.resolve(domain, 'NS')
+        for ns in ns_records:
+            ns_host = ns.to_text()
+            console.print(f"[yellow]Tentando transferir zona via {ns_host}[/yellow]")
+            try:
+                zone = dns.zone.from_xfr(dns.query.xfr(ns_host, domain, timeout=5))
+                if zone:
+                    records = []
+                    for name, node in zone.nodes.items():
+                        record_name = name.to_text()
+                        for rdataset in node.rdatasets:
+                            for rdata in rdataset:
+                                records.append(f"{record_name} {rdataset.rdtype} {rdata}")
+                    console.print(f"[green]Zone transfer bem-sucedida! Registros: {len(records)}[/green]")
+                    return {"ns": ns_host, "records": records}
+            except Exception as e:
+                console.print(f"[red]Zone transfer falhou via {ns_host}: {e}[/red]")
+        return None
+    except Exception as e:
+        console.print(f"[red]Erro ao obter NS records: {e}[/red]")
+        return None
+
+def whois_info(domain: str) -> dict | None:
+    """Consulta dados WHOIS do domínio."""
+    console.print(f"[blue]Consultando WHOIS de {domain}[/blue]")
+    try:
+        w = whois.whois(domain)
+        if w is None:
+            return None
+        if isinstance(w, dict):
+            return w
+        if hasattr(w, "to_dict") and callable(w.to_dict):
+            return w.to_dict()
+        return dict(w)
+    except Exception as e:
+        console.print(f"[red]Erro WHOIS: {e}[/red]")
+        return None
+
+def web_fingerprint(domain: str) -> dict:
+    """Detecta tecnologias web via headers HTTP."""
+    console.print(f"[blue]Realizando fingerprint HTTP em {domain}[/blue]")
+    url = f"http://{domain}"
+    headers_info = {}
+    try:
+        resp = requests.get(url, timeout=5, allow_redirects=True)
+        headers_info["status_code"] = resp.status_code
+        headers_info["server"] = resp.headers.get("Server", "N/A")
+        headers_info["x_powered_by"] = resp.headers.get("X-Powered-By", "N/A")
+        headers_info["content_type"] = resp.headers.get("Content-Type", "N/A")
+        headers_info["final_url"] = resp.url
+    except Exception as e:
+        console.print(f"[red]Erro fingerprint HTTP: {e}[/red]")
+    return headers_info
 
 def run(args):
-    domain = args.domain
-    print(f"[cyan][*][/cyan] Iniciando reconhecimento em: [bold]{domain}[/bold]")
+    domain = args.domain.strip()
+    console.rule(f"[bold green]Recon - Scan completo para {domain}[/bold green]")
 
-    try:
-        # WHOIS básico
-        print("[yellow][~][/yellow] WHOIS:")
-        subprocess.run(["whois", domain], check=True)
+    # 1. Scan de portas
+    console.print(f"[bold]Escaneando portas comuns em {domain}...[/bold]")
+    open_ports = []
+    with ThreadPoolExecutor(max_workers=30) as executor:
+        futures = {executor.submit(scan_port, domain, port): port for port in COMMON_PORTS}
+        for future in as_completed(futures):
+            port = futures[future]
+            if future.result():
+                banner = banner_grab(domain, port)
+                open_ports.append({"port": port, "banner": banner or "N/A"})
 
-        # DNS lookup
-        print("[yellow][~][/yellow] DNS Lookup:")
-        subprocess.run(["dig", domain, "+short"], check=True)
+    # Mostrar resultado portas abertas
+    table = Table(title=f"Portas abertas em {domain}")
+    table.add_column("Porta", style="cyan")
+    table.add_column("Banner", style="magenta")
+    for item in sorted(open_ports, key=lambda x: x["port"]):
+        table.add_row(str(item["port"]), item["banner"])
+    console.print(table)
 
-        # Subdomain brute básico (exemplo simples com 'www')
-        print("[yellow][~][/yellow] Teste de subdomínio (www):")
-        subprocess.run(["dig", f"www.{domain}", "+short"], check=True)
+    # 2. Enumeração de subdomínios
+    subdomains = subdomain_enum(domain)
 
-    except subprocess.CalledProcessError as e:
-        print(f"[red][!][/red] Erro ao executar: {e}")
+    # 3. Zone Transfer DNS
+    zone_data = try_zone_transfer(domain)
 
+    # 4. Whois
+    whois_data = whois_info(domain)
+
+    # 5. Fingerprint HTTP
+    fp = web_fingerprint(domain)
+
+    # Mostrar summary WHOIS com serialização segura para JSON (datetime -> string)
+    if whois_data:
+        whois_json = json.dumps(whois_data, indent=2, ensure_ascii=False, default=json_serial)
+        console.print(Panel(Text(whois_json, overflow="fold"), title="WHOIS info", subtitle=domain))
+    else:
+        console.print("[yellow]Nenhuma informação WHOIS disponível[/yellow]")
+
+    # Mostrar fingerprint HTTP
+    fp_table = Table(title="Fingerprint HTTP")
+    fp_table.add_column("Campo", style="cyan")
+    fp_table.add_column("Valor", style="magenta")
+    for k, v in fp.items():
+        fp_table.add_row(k, str(v))
+    console.print(fp_table)
+
+    # Salvar resultados em JSON se pedido
+    if getattr(args, "output", None):
+        results = {
+            "domain": domain,
+            "open_ports": open_ports,
+            "subdomains": subdomains,
+            "zone_transfer": zone_data,
+            "whois": whois_data,
+            "http_fingerprint": fp,
+        }
+        try:
+            with open(args.output, "w", encoding="utf-8") as f:
+                json.dump(results, f, indent=2, ensure_ascii=False, default=json_serial)
+            console.print(f"[bold green]Relatório salvo em {args.output}[/bold green]")
+        except Exception as e:
+            console.print(f"[red]Erro ao salvar relatório JSON: {e}[/red]")
