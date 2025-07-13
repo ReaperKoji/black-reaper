@@ -5,6 +5,9 @@ import sys
 import subprocess
 import json
 import datetime
+import os
+from pathlib import Path
+from rich.table import Table
 from typing import Optional, List, Dict, Any
 from recommendations import generate_recommendations
 from typing import Dict
@@ -483,6 +486,56 @@ def check_uid_discrepancies() -> Dict[str, str]:
 
     return {}
 
+def scan_ssh_files() -> dict:
+    """
+    Escaneia arquivos sensíveis no diretório ~/.ssh do usuário atual,
+    exibe um resumo e retorna os dados em formato dict.
+    """
+    findings = []
+    ssh_dir = Path.home() / ".ssh"
+
+    if not ssh_dir.exists() or not ssh_dir.is_dir():
+        console.print("[yellow]Diretório ~/.ssh não encontrado ou inacessível.[/yellow]")
+        return {"message": "Diretório ~/.ssh não encontrado ou inacessível."}
+
+    # Lista arquivos comuns que podem conter chaves ou config sensível
+    files_to_check = ["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "config", "known_hosts", "authorized_keys"]
+
+    table = Table(title="Arquivos sensíveis no ~/.ssh")
+
+    table.add_column("Arquivo", style="cyan", no_wrap=True)
+    table.add_column("Tamanho (bytes)", justify="right")
+    table.add_column("Permissões", justify="center")
+    table.add_column("Última modificação", justify="center")
+
+    for filename in files_to_check:
+        file_path = ssh_dir / filename
+        if file_path.exists():
+            try:
+                stat = file_path.stat()
+                permissions = oct(stat.st_mode)[-3:]
+                size = stat.st_size
+                mtime = stat.st_mtime
+                from datetime import datetime
+                mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+
+                table.add_row(filename, str(size), permissions, mtime_str)
+
+                findings.append({
+                    "file": str(file_path),
+                    "size": size,
+                    "permissions": permissions,
+                    "last_modified": mtime_str
+                })
+            except Exception as e:
+                console.print(f"[red]Erro ao acessar {file_path}: {e}[/red]")
+
+    if findings:
+        console.print(table)
+    else:
+        console.print("[green]Nenhum arquivo sensível encontrado no ~/.ssh[/green]")
+
+    return findings
 
 # Esse bloco deve ficar na função principal, tipo run_all(args):
 
@@ -508,6 +561,7 @@ def run_all(args) -> None:
     result["unusual_bin_permissions"] = check_unusual_binaries_permissions()
     result["dangerous_env_vars"] = check_dangerous_env_vars()
     result["uid_discrepancies"] = check_uid_discrepancies()
+    result["ssh_files"] = scan_ssh_files()
 
     # Gerar recomendações automáticas
     recommendations = generate_recommendations(result)
