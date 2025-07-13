@@ -18,6 +18,8 @@ def main():
     # Subcomando: WebEnum
     web_parser = subparsers.add_parser("webenum", help="Enumeração de diretórios e tecnologias web")
     web_parser.add_argument("-u", "--url", required=True, help="URL alvo")
+    web_parser.add_argument("--timeout", type=int, default=5, help="Timeout da requisição HTTP")
+    web_parser.add_argument("--user-agent", default="BlackReaper/1.0", help="User-Agent customizado")
     web_parser.set_defaults(func=webenum.run)
 
     # Subcomando: Reverse Shell

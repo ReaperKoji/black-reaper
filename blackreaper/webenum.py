@@ -1,47 +1,97 @@
+# blackreaper/webenum.py
+
 import requests
-from rich.console import Console
+from rich import print
 from rich.table import Table
-from requests.exceptions import RequestException
+from rich.console import Console
+import time
 
 console = Console()
 
-class WebEnumerator:
-    def __init__(self, url: str, timeout: int = 10):
-        self.url = url.rstrip('/')
-        self.timeout = timeout
+DEFAULT_WORDLIST = [
+    "admin", "login", "dashboard", "config", "backup", "uploads",
+    "index.php", "index.html", "robots.txt", "sitemap.xml"
+]
 
-    def fetch_headers(self):
-        console.log(f"[cyan]Fazendo requisição para[/cyan] [bold]{self.url}[/bold]")
-        try:
-            response = requests.get(self.url, timeout=self.timeout)
-            console.log(f"[green]Status code:[/green] {response.status_code}")
-            return response.headers
-        except RequestException as e:
-            console.log(f"[red]Erro ao acessar {self.url}: {e}[/red]")
-            return None
+def fetch_url(url, headers=None, timeout=5):
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=False)
+        return response.status_code, response.headers, response.text
+    except requests.RequestException as e:
+        console.log(f"[red]Erro na requisição {url}: {e}[/red]")
+        return None, None, None
 
-    def display_headers(self, headers):
-        if not headers:
-            console.print("[red]Nenhum header para exibir[/red]")
-            return
+def fuzz_directories(base_url, wordlist, headers, timeout):
+    results = []
+    for path in wordlist:
+        url = base_url.rstrip("/") + "/" + path
+        console.log(f"Testando: {url}")
+        status, hdrs, _ = fetch_url(url, headers=headers, timeout=timeout)
+        if status and status in [200, 301, 302, 401, 403]:
+            results.append((url, status))
+        time.sleep(0.2)  # evitar flood muito rápido
+    return results
 
-        table = Table(title=f"Headers HTTP - {self.url}", show_header=True, header_style="bold magenta")
-        table.add_column("Header", style="cyan", no_wrap=True)
-        table.add_column("Valor", style="white")
+def fingerprint_tech(headers, content):
+    techs = []
+    server = headers.get("Server", "") if headers else ""
+    powered_by = headers.get("X-Powered-By", "") if headers else ""
+    if server:
+        techs.append(f"Server: {server}")
+    if powered_by:
+        techs.append(f"X-Powered-By: {powered_by}")
 
-        for key, value in headers.items():
-            table.add_row(key, value)
-
-        console.print(table)
-
-    def run(self):
-        headers = self.fetch_headers()
-        self.display_headers(headers)
+    # fingerprint simples no conteúdo
+    if "wp-content" in content.lower():
+        techs.append("WordPress detected")
+    if "<script src=\"https://cdn.jsdelivr.net/npm/vue" in content.lower():
+        techs.append("Vue.js detected")
+    return techs
 
 def run(args):
-    """
-    Função para rodar o comando webenum da CLI.
-    Recebe o Namespace args do argparse.
-    """
-    enumerator = WebEnumerator(args.url)
-    enumerator.run()
+    console.rule("[bold green]BlackReaper WebEnum[/bold green]")
+    url = args.url
+    timeout = getattr(args, "timeout", 5)
+    user_agent = getattr(args, "user_agent", "BlackReaper/1.0")
+    headers = {"User-Agent": user_agent}
+
+    console.log(f"Fazendo requisição para {url}")
+    status, hdrs, content = fetch_url(url, headers=headers, timeout=timeout)
+
+    if status is None:
+        console.print(f"[red]Falha ao acessar {url}[/red]")
+        return
+
+    console.print(f"[bold yellow]Status code:[/bold yellow] {status}")
+
+    # Mostrar headers em tabela
+    table = Table(title=f"Headers HTTP - {url}")
+    table.add_column("Header")
+    table.add_column("Valor")
+    for k, v in hdrs.items():
+        table.add_row(k, v)
+    console.print(table)
+
+    # Fingerprint de tecnologia
+    techs = fingerprint_tech(hdrs, content)
+    if techs:
+        console.print("[bold cyan]Fingerprint de tecnologias detectadas:[/bold cyan]")
+        for t in techs:
+            console.print(f" - {t}")
+    else:
+        console.print("[bold cyan]Nenhuma tecnologia detectada.[/bold cyan]")
+
+    # Enumeração de diretórios via wordlist
+    console.print("[bold green]Iniciando enumeração de diretórios básica[/bold green]")
+    wordlist = DEFAULT_WORDLIST
+    results = fuzz_directories(url, wordlist, headers, timeout)
+
+    if results:
+        table2 = Table(title="Diretórios encontrados")
+        table2.add_column("URL")
+        table2.add_column("Status Code")
+        for url_found, code in results:
+            table2.add_row(url_found, str(code))
+        console.print(table2)
+    else:
+        console.print("[yellow]Nenhum diretório encontrado com os códigos esperados.[/yellow]")
