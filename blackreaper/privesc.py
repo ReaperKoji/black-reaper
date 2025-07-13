@@ -6,6 +6,8 @@ import subprocess
 import json
 import datetime
 from typing import Optional, List, Dict, Any
+from recommendations import generate_recommendations
+from typing import Dict
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -459,6 +461,28 @@ def scan_dangerous_commands_in_scripts() -> List[Dict[str, str]]:
 
     return findings
 
+def check_uid_discrepancies() -> Dict[str, str]:
+    """
+    Verifica UID real e efetivo do processo atual.
+    """
+    import os
+    import pwd
+
+    try:
+        real_uid = os.getuid()
+        effective_uid = os.geteuid()
+
+        if real_uid != effective_uid:
+            return {
+                "real_uid": str(real_uid),
+                "effective_uid": str(effective_uid),
+                "warning": "UID efetivo diferente do real. Pode indicar execução via SUID ou comportamento anômalo."
+            }
+    except Exception as e:
+        return {"error": f"Erro ao verificar UIDs: {e}"}
+
+    return {}
+
 
 # Esse bloco deve ficar na função principal, tipo run_all(args):
 
@@ -466,9 +490,9 @@ def run_all(args) -> None:
     console.print("[bold magenta]--- Iniciando Privesc Scan ---[/bold magenta]\n")
     result = {}
 
-    # Definir output_path no início
     output_path = getattr(args, "output", None)
 
+    # Coleta de dados
     result["user_info"] = user_info()
     result["kernel_info"] = kernel_info()
     result["suid_sgid"] = suid_sgid_files()
@@ -485,6 +509,16 @@ def run_all(args) -> None:
     result["dangerous_env_vars"] = check_dangerous_env_vars()
     result["uid_discrepancies"] = check_uid_discrepancies()
 
+    # Gerar recomendações automáticas
+    recommendations = generate_recommendations(result)
+    result["recommendations"] = recommendations  # Adiciona ao JSON também
+
+    # Mostrar recomendações no console
+    console.print("\n[bold cyan]🔍 Recomendações baseadas nos achados:[/bold cyan]")
+    for r in recommendations:
+        console.print(f"• {r}")
+
+    # Salvar resultado JSON (se --output for usado)
     if output_path:
         try:
             with open(output_path, "w", encoding="utf-8") as f:
