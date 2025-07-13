@@ -253,12 +253,12 @@ def backup_files() -> List[str]:
         console.print("[green]Nenhum arquivo de backup sensível encontrado[/green]")
     return found
 
-def dangerous_binaries() -> List[str]:
+def dangerous_binaries_gtfobins() -> List[Dict[str, str]]:
     """
-    Busca binários comuns que podem ser usados para privesc via abuse, como python, bash, vi, etc,
-    que estejam disponíveis no PATH.
+    Lista comandos comuns que podem ser abusados para escalada de privilégio
+    e mostra os caminhos e os links diretos para GTFOBins.
     """
-    section("Comandos Potencialmente Vulneráveis para Privesc")
+    section("Comandos Potencialmente Abusáveis (GTFOBins)")
     candidates = [
         "bash", "sh", "python", "python3", "perl", "ruby",
         "nc", "netcat", "nmap", "vim", "vi", "less", "more",
@@ -269,17 +269,24 @@ def dangerous_binaries() -> List[str]:
     for cmd in candidates:
         path = shutil.which(cmd)
         if path:
-            found.append(f"{cmd} → {path}")
+            gtfobins_link = f"https://gtfobins.github.io/gtfobins/{cmd}/"
+            found.append({
+                "cmd": cmd,
+                "path": path,
+                "gtfobins": gtfobins_link
+            })
+    
     if found:
-        table = Table(title="Comandos no PATH para possível abuso")
+        table = Table(title="Possíveis binários de escalada com link GTFOBins")
         table.add_column("Comando", style="cyan")
         table.add_column("Caminho", style="green")
-        for f in found:
-            cmd_name, cmd_path = f.split(" → ")
-            table.add_row(cmd_name, cmd_path)
+        table.add_column("GTFOBins", style="magenta")
+        for item in found:
+            table.add_row(item["cmd"], item["path"], item["gtfobins"])
         console.print(table)
     else:
-        console.print("[yellow]Nenhum comando vulnerável encontrado no PATH[/yellow]")
+        console.print("[yellow]Nenhum comando potencialmente abusável encontrado no PATH[/yellow]")
+    
     return found
 
 def run_all(args) -> None:
@@ -296,7 +303,7 @@ def run_all(args) -> None:
     result["cron_jobs"] = cron_jobs()
     result["writable_mounts"] = writable_mounts()
     result["backup_files"] = backup_files()
-    result["dangerous_binaries"] = dangerous_binaries()
+    result["dangerous_binaries"] = dangerous_binaries_gtfobins()
 
     # Salvar em JSON se solicitado
     output_path: Optional[str] = getattr(args, "output", None)
