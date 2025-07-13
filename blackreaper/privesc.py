@@ -288,10 +288,121 @@ def dangerous_binaries_gtfobins() -> List[Dict[str, str]]:
         console.print("[yellow]Nenhum comando potencialmente abusável encontrado no PATH[/yellow]")
     
     return found
+def check_unusual_binaries_permissions() -> List[Dict[str, str]]:
+    """
+    Verifica binários nos diretórios do PATH com permissões incomuns:
+    - Permissões world-writable
+    - Dono diferente de root
+    """
+    section("Verificando Permissões Incomuns em Binários do PATH")
+
+    suspicious = []
+    paths = os.environ.get("PATH", "").split(":")
+    checked = set()
+
+    for directory in paths:
+        if not os.path.isdir(directory):
+            continue
+        try:
+            for fname in os.listdir(directory):
+                full_path = os.path.join(directory, fname)
+                if full_path in checked or not os.path.isfile(full_path):
+                    continue
+                checked.add(full_path)
+                stat_info = os.stat(full_path)
+                perms = oct(stat_info.st_mode)[-3:]
+                uid = stat_info.st_uid
+                user = pwd.getpwuid(uid).pw_name
+
+                # World-writable ou dono não root
+                if perms.endswith("7") or user != "root":
+                    suspicious.append({
+                        "file": full_path,
+                        "perms": perms,
+                        "owner": user
+                    })
+        except Exception:
+            continue
+
+    if suspicious:
+        table = Table(title="Binários com Permissões Incomuns")
+        table.add_column("Arquivo", style="cyan")
+        table.add_column("Permissões", style="yellow")
+        table.add_column("Dono", style="red")
+        for entry in suspicious:
+            table.add_row(entry["file"], entry["perms"], entry["owner"])
+        console.print(table)
+    else:
+        console.print("[green]Nenhum binário com permissões incomuns encontrado nos diretórios do PATH[/green]")
+
+    return suspicious
+
+
+def scan_dangerous_commands_in_scripts() -> List[Dict[str, str]]:
+    """
+    Procura por comandos potencialmente perigosos em scripts comuns do sistema.
+    Verifica arquivos como crontabs, init.d, systemd, etc., buscando por binários perigosos.
+    """
+    section("Comandos Perigosos em Scripts do Sistema")
+
+    search_paths = [
+        "/etc/crontab",
+        "/etc/cron.d/",
+        "/etc/cron.daily/",
+        "/etc/cron.hourly/",
+        "/etc/cron.monthly/",
+        "/etc/cron.weekly/",
+        "/etc/init.d/",
+        "/etc/systemd/",
+        "/opt/",
+        "/home/"
+    ]
+
+    keywords = ["chmod", "chown", "cp", "mv", "tar", "awk", "dd", "python", "bash", "sh", "wget", "curl"]
+    findings = []
+
+    for path in search_paths:
+        if os.path.isfile(path):
+            files = [path]
+        elif os.path.isdir(path):
+            try:
+                files = [os.path.join(path, f) for f in os.listdir(path)]
+            except Exception:
+                continue
+        else:
+            continue
+
+        for file in files:
+            try:
+                with open(file, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                    for kw in keywords:
+                        if re.search(rf"\b{kw}\b", content):
+                            findings.append({"file": file, "command": kw})
+            except Exception:
+                continue
+
+    if findings:
+        table = Table(title="Comandos Perigosos Encontrados em Scripts")
+        table.add_column("Arquivo", style="cyan")
+        table.add_column("Comando", style="red")
+        for item in findings:
+            table.add_row(item["file"], item["command"])
+        console.print(table)
+    else:
+        console.print("[green]Nenhum comando perigoso encontrado nos scripts verificados[/green]")
+
+    return findings
+
+
+# Esse bloco deve ficar na função principal, tipo run_all(args):
 
 def run_all(args) -> None:
     console.print("[bold magenta]--- Iniciando Privesc Scan ---[/bold magenta]\n")
     result = {}
+
+    # Definir output_path no início
+    output_path = getattr(args, "output", None)
 
     result["user_info"] = user_info()
     result["kernel_info"] = kernel_info()
@@ -304,14 +415,14 @@ def run_all(args) -> None:
     result["writable_mounts"] = writable_mounts()
     result["backup_files"] = backup_files()
     result["dangerous_binaries"] = dangerous_binaries_gtfobins()
+    result["dangerous_commands_in_scripts"] = scan_dangerous_commands_in_scripts()
+    result["unusual_bin_permissions"] = check_unusual_binaries_permissions()
 
-    # Salvar em JSON se solicitado
-    output_path: Optional[str] = getattr(args, "output", None)
     if output_path:
         try:
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(result, f, indent=2, ensure_ascii=False, default=json_serial)
-            console.print(f"\n[bold green]Relatório salvo em {output_path}[/bold green]")
+            console.print(f"[green]Relatório salvo em {output_path}[/green]")
         except Exception as e:
             console.print(f"[red]Erro ao salvar relatório JSON: {e}[/red]")
 
