@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import pwd
 import os
 import sys
 import subprocess
@@ -253,6 +254,70 @@ def backup_files() -> List[str]:
         console.print("[green]Nenhum arquivo de backup sensível encontrado[/green]")
     return found
 
+def check_dangerous_env_vars() -> List[Dict[str, str]]:
+    """
+    Analisa variáveis de ambiente em busca de configurações perigosas.
+    Ex: diretórios world-writable no PATH, uso de LD_PRELOAD, etc.
+    """
+    section("Análise de Variáveis de Ambiente Perigosas")
+
+    dangerous_vars = ["PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH"]
+    findings = []
+
+    for var in dangerous_vars:
+        value = os.environ.get(var)
+        if not value:
+            continue
+
+        # Dividir por ":" se for um caminho (exceto LD_PRELOAD)
+        paths = value.split(":") if ":" in value else [value]
+
+        for p in paths:
+            p = p.strip()
+
+            # PATHs world-writable
+            if os.path.isdir(p):
+                try:
+                    mode = os.stat(p).st_mode
+                    if bool(mode & 0o002):  # World-writable
+                        findings.append({
+                            "variable": var,
+                            "value": p,
+                            "issue": "Diretório world-writable"
+                        })
+                except Exception:
+                    continue
+
+            # Diretórios potencialmente perigosos
+            if p in [".", "/tmp", "/var/tmp"]:
+                findings.append({
+                    "variable": var,
+                    "value": p,
+                    "issue": "Diretório potencialmente inseguro"
+                })
+
+            # Bibliotecas/carregadores suspeitos
+            if var == "LD_PRELOAD" and p:
+                findings.append({
+                    "variable": var,
+                    "value": p,
+                    "issue": "Uso de LD_PRELOAD pode indicar injeção de biblioteca"
+                })
+
+    # Exibir resultados
+    if findings:
+        table = Table(title="Variáveis de Ambiente Potencialmente Perigosas")
+        table.add_column("Variável", style="cyan")
+        table.add_column("Valor", style="green")
+        table.add_column("Problema", style="red")
+        for item in findings:
+            table.add_row(item["variable"], item["value"], item["issue"])
+        console.print(table)
+    else:
+        console.print("[green]Nenhuma variável de ambiente perigosa encontrada[/green]")
+
+    return findings
+
 def dangerous_binaries_gtfobins() -> List[Dict[str, str]]:
     """
     Lista comandos comuns que podem ser abusados para escalada de privilégio
@@ -417,6 +482,8 @@ def run_all(args) -> None:
     result["dangerous_binaries"] = dangerous_binaries_gtfobins()
     result["dangerous_commands_in_scripts"] = scan_dangerous_commands_in_scripts()
     result["unusual_bin_permissions"] = check_unusual_binaries_permissions()
+    result["dangerous_env_vars"] = check_dangerous_env_vars()
+    result["uid_discrepancies"] = check_uid_discrepancies()
 
     if output_path:
         try:
@@ -425,6 +492,48 @@ def run_all(args) -> None:
             console.print(f"[green]Relatório salvo em {output_path}[/green]")
         except Exception as e:
             console.print(f"[red]Erro ao salvar relatório JSON: {e}[/red]")
+
+def check_uid_discrepancies() -> Dict[str, str]:
+    """
+    Verifica UID real e efetivo do processo atual.
+    Se forem diferentes, pode indicar uso de SUID ou privilege escalation.
+    """
+    section("Verificação de UID Real vs Efetivo")
+
+    try:
+        real_uid = os.getuid()
+        effective_uid = os.geteuid()
+        username = pwd.getpwuid(real_uid).pw_name
+        e_username = pwd.getpwuid(effective_uid).pw_name
+
+        table = Table(title="UIDs do Processo Atual")
+        table.add_column("Tipo", style="cyan")
+        table.add_column("UID", style="yellow")
+        table.add_column("Usuário", style="magenta")
+
+        table.add_row("UID Real", str(real_uid), username)
+        table.add_row("UID Efetivo", str(effective_uid), e_username)
+
+        if real_uid != effective_uid:
+            console.print("[bold red]Atenção: UID real e efetivo são diferentes! Pode indicar privilege escalation.[/bold red]")
+        else:
+            console.print("[green]UIDs iguais - sem anomalias aparentes[/green]")
+
+        console.print(table)
+
+        return {
+            "real_uid": str(real_uid),
+            "real_user": username,
+            "effective_uid": str(effective_uid),
+            "effective_user": e_username
+        }
+
+    except AttributeError:
+        console.print("[yellow]Este sistema não suporta verificação de UID (ex: Windows)[/yellow]")
+        return {"real_uid": "N/A", "effective_uid": "N/A"}
+    except Exception as e:
+        console.print(f"[red]Erro ao verificar UIDs: {e}[/red]")
+        return {"real_uid": "Erro", "effective_uid": "Erro"}
 
 def main():
     parser = argparse.ArgumentParser(description="Privesc Scanner - Escalada de Privilégio Linux")
