@@ -6,6 +6,7 @@ import dns.zone
 import whois
 import json
 import datetime
+import csv
 from typing import Optional, List, Dict, Union
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.console import Console
@@ -142,15 +143,57 @@ def web_fingerprint(domain: str) -> Dict[str, Union[str, int]]:
         console.print(f"[red]Erro fingerprint HTTP: {e}[/red]")
     return headers_info
 
+def save_csv(results: Dict, filename: str) -> None:
+    """
+    Salva os dados do relatório em CSV.
+    """
+    try:
+        with open(filename, "w", newline="", encoding="utf-8") as csvfile:
+            writer = csv.writer(csvfile)
+            
+            writer.writerow(["Open Ports"])
+            writer.writerow(["Port", "Banner"])
+            for port in results.get("open_ports", []):
+                writer.writerow([port["port"], port["banner"]])
+            
+            writer.writerow([])
+            writer.writerow(["Subdomains"])
+            for sub in results.get("subdomains", []):
+                writer.writerow([sub])
+            
+            writer.writerow([])
+            writer.writerow(["Zone Transfer"])
+            zone = results.get("zone_transfer")
+            if zone:
+                writer.writerow([f"NS: {zone.get('ns', '')}"])
+                writer.writerow(["Records"])
+                for record in zone.get("records", []):
+                    writer.writerow([record])
+            else:
+                writer.writerow(["No zone transfer data"])
+            
+            writer.writerow([])
+            writer.writerow(["WHOIS Data"])
+            whois_data = results.get("whois")
+            if whois_data:
+                for key, value in whois_data.items():
+                    writer.writerow([key, value])
+            else:
+                writer.writerow(["No WHOIS data"])
+            
+            writer.writerow([])
+            writer.writerow(["HTTP Fingerprint"])
+            fp = results.get("http_fingerprint", {})
+            for key, value in fp.items():
+                writer.writerow([key, value])
+        console.print(f"[bold green]Relatório CSV salvo em {filename}[/bold green]")
+    except Exception as e:
+        console.print(f"[red]Erro ao salvar CSV: {e}[/red]")
+
 def run(args) -> None:
-    """
-    Função principal de execução do recon, com threading para escanear portas
-    e coleta dos dados do domínio.
-    """
     domain = args.domain.strip()
     console.rule(f"[bold green]Recon - Scan completo para {domain}[/bold green]")
 
-    # Escaneamento de portas comuns com threading
     console.print(f"[bold]Escaneando portas comuns em {domain}...[/bold]")
     open_ports: List[Dict[str, Union[int, str]]] = []
     with ThreadPoolExecutor(max_workers=30) as executor:
@@ -161,7 +204,6 @@ def run(args) -> None:
                 banner = banner_grab(domain, port)
                 open_ports.append({"port": port, "banner": banner or "N/A"})
 
-    # Exibir portas abertas
     table = Table(title=f"Portas abertas em {domain}")
     table.add_column("Porta", style="cyan", no_wrap=True)
     table.add_column("Banner", style="magenta")
@@ -169,26 +211,20 @@ def run(args) -> None:
         table.add_row(str(item["port"]), item["banner"])
     console.print(table)
 
-    # Enumeração de subdomínios
     subdomains = subdomain_enum(domain)
 
-    # Zone Transfer DNS
     zone_data = try_zone_transfer(domain)
 
-    # Consulta WHOIS
     whois_data = whois_info(domain)
 
-    # Fingerprint HTTP
     fp = web_fingerprint(domain)
 
-    # Exibir WHOIS com tratamento para datetime
     if whois_data:
         whois_json = json.dumps(whois_data, indent=2, ensure_ascii=False, default=json_serial)
         console.print(Panel(Text(whois_json, overflow="fold"), title="WHOIS info", subtitle=domain))
     else:
         console.print("[yellow]Nenhuma informação WHOIS disponível[/yellow]")
 
-    # Exibir fingerprint HTTP
     fp_table = Table(title="Fingerprint HTTP")
     fp_table.add_column("Campo", style="cyan")
     fp_table.add_column("Valor", style="magenta")
@@ -196,9 +232,8 @@ def run(args) -> None:
         fp_table.add_row(k, str(v))
     console.print(fp_table)
 
-    # Salvar resultado em JSON
-    output_path: Optional[str] = getattr(args, "output", None)
-    if output_path:
+    output_path_json: Optional[str] = getattr(args, "output", None)
+    if output_path_json:
         results = {
             "domain": domain,
             "open_ports": open_ports,
@@ -208,16 +243,21 @@ def run(args) -> None:
             "http_fingerprint": fp,
         }
         try:
-            with open(output_path, "w", encoding="utf-8") as f:
+            with open(output_path_json, "w", encoding="utf-8") as f:
                 json.dump(results, f, indent=2, ensure_ascii=False, default=json_serial)
-            console.print(f"[bold green]Relatório salvo em {output_path}[/bold green]")
+            console.print(f"[bold green]Relatório JSON salvo em {output_path_json}[/bold green]")
         except Exception as e:
             console.print(f"[red]Erro ao salvar relatório JSON: {e}[/red]")
+
+        # Também salva CSV automático com o mesmo nome, só extensão diferente
+        csv_path = output_path_json.rsplit(".", 1)[0] + ".csv"
+        save_csv(results, csv_path)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Recon Tool - scanner completo de domínio")
     parser.add_argument("-d", "--domain", required=True, help="Domínio para escanear")
-    parser.add_argument("-o", "--output", help="Caminho para salvar relatório JSON (opcional)")
+    parser.add_argument("-o", "--output", help="Caminho para salvar relatório JSON/CSV (opcional, extensão JSON)")
     args = parser.parse_args()
     run(args)
 
